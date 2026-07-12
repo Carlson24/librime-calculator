@@ -79,6 +79,26 @@ static bool is_identifier(const std::string& s) {
   return true;
 }
 
+static std::string make_sig(const std::string& name, const FuncInfo& info) {
+  std::string s = name + "(";
+  if (info.max_args == 0) {
+  } else if (info.max_args > 0) {
+    for (int i = 0; i < info.max_args; ++i) {
+      if (i > 0) s += ",";
+      s += (char)('a' + i);
+    }
+  } else {
+    for (int i = 0; i < info.min_args; ++i) {
+      if (i > 0) s += ",";
+      s += (char)('a' + i);
+    }
+    if (info.min_args > 0) s += ",";
+    s += "...";
+  }
+  s += "): " + info.desc;
+  return s;
+}
+
 static void add_candidates(an<FifoTranslation>& translation,
                            const std::string& input,
                            int start,
@@ -187,107 +207,127 @@ an<Translation> CalculatorTranslator::Query(const string& input,
     return translation;
   }
 
-  if (std::isalpha(express[0]) && express.find('(') == std::string::npos &&
-      express.find(')') == std::string::npos) {
+  if (express == "help") {
+    for (const auto& [name, info] : kCalcFunctions) {
+      add_candidates(translation, input, segment.start, segment.end,
+                     make_sig(name, info));
+    }
+    return translation;
+  }
+
+  if (std::isalpha(express[0])) {
     std::string func_name;
     std::string param_part;
-    for (size_t i = express.size(); i > 0; --i) {
-      std::string candidate = express.substr(0, i);
-      if (kCalcFunctions.find(candidate) != kCalcFunctions.end()) {
-        func_name = candidate;
-        param_part = express.substr(i);
-        break;
-      }
+
+    auto paren_open = express.find('(');
+    auto paren_close = express.rfind(')');
+
+    if (paren_open != std::string::npos &&
+        paren_close != std::string::npos &&
+        paren_close == express.size() - 1 &&
+        paren_close > paren_open) {
+      func_name = express.substr(0, paren_open);
+      param_part = express.substr(paren_open + 1, paren_close - paren_open - 1);
     }
 
     if (!func_name.empty()) {
-      auto& info = kCalcFunctions.at(func_name);
-      std::vector<std::string> params;
+      auto fit = kCalcFunctions.find(func_name);
+      if (fit != kCalcFunctions.end()) {
+        auto& info = fit->second;
+        std::vector<std::string> params;
 
-      if (!param_part.empty()) {
-        bool in_quotes = false;
-        char quote_char = 0;
-        std::string current;
-        for (char c : param_part) {
-          if (in_quotes) {
-            if (c == quote_char) {
-              in_quotes = false;
-              params.push_back(current);
-              current.clear();
-            } else {
-              current += c;
-            }
-          } else {
-            if (c == '"' || c == '\'') {
-              in_quotes = true;
-              quote_char = c;
-              if (!current.empty()) {
+        if (!param_part.empty()) {
+          bool in_quotes = false;
+          char quote_char = 0;
+          std::string current;
+          for (char c : param_part) {
+            if (in_quotes) {
+              if (c == quote_char) {
+                in_quotes = false;
                 params.push_back(current);
                 current.clear();
-              }
-            } else if (c == ',') {
-              if (!current.empty()) {
-                params.push_back(current);
-                current.clear();
+              } else {
+                current += c;
               }
             } else {
-              current += c;
+              if (c == '"' || c == '\'') {
+                in_quotes = true;
+                quote_char = c;
+                if (!current.empty()) {
+                  params.push_back(current);
+                  current.clear();
+                }
+              } else if (c == ',') {
+                if (!current.empty()) {
+                  params.push_back(current);
+                  current.clear();
+                }
+              } else {
+                current += c;
+              }
             }
           }
+          if (!current.empty()) {
+            params.push_back(current);
+          }
         }
-        if (!current.empty()) {
-          params.push_back(current);
-        }
-      }
 
-      for (auto& p : params) {
-        while (!p.empty() && p.front() == ' ')
-          p.erase(0, 1);
-        while (!p.empty() && p.back() == ' ')
-          p.pop_back();
-      }
-
-      if (params.empty() && info.min_args > 0) {
-        add_candidates(translation, input, segment.start, segment.end,
-                       func_name + ": " + info.desc);
-        return translation;
-      }
-
-      if ((int)params.size() < info.min_args) {
-        add_candidates(translation, input, segment.start, segment.end,
-                       "错误: 函数 " + func_name + " 需要至少 " +
-                           std::to_string(info.min_args) + " 个参数");
-        return translation;
-      }
-      if (info.max_args > 0 && (int)params.size() > info.max_args) {
-        add_candidates(translation, input, segment.start, segment.end,
-                       "错误: 函数 " + func_name + " 最多接受 " +
-                           std::to_string(info.max_args) + " 个参数");
-        return translation;
-      }
-
-      if (info.need_quote) {
-        size_t q_idx = 0;
         for (auto& p : params) {
-          if (!is_number_str(p) &&
-              (p.size() < 2 || (p.front() != '"' && p.front() != '\''))) {
-            if (q_idx == 1 && info.min_args >= 2) {  // number for base
-            } else {
-              p = "'" + p + "'";
-            }
-          }
-          ++q_idx;
+          while (!p.empty() && p.front() == ' ')
+            p.erase(0, 1);
+          while (!p.empty() && p.back() == ' ')
+            p.pop_back();
         }
-      }
 
-      try {
-        std::string result = info.impl(params);
-        add_result(translation, input, segment.start, segment.end, result,
-                   func_name + "(" + param_part + ")");
-      } catch (...) {
-        add_candidates(translation, input, segment.start, segment.end,
-                       "函数执行错误: " + func_name);
+        if (params.empty() && info.min_args > 0) {
+          add_candidates(translation, input, segment.start, segment.end,
+                         func_name + ": " + info.desc);
+          return translation;
+        }
+
+        if ((int)params.size() < info.min_args) {
+          add_candidates(translation, input, segment.start, segment.end,
+                         "错误: 函数 " + func_name + " 需要至少 " +
+                             std::to_string(info.min_args) + " 个参数");
+          return translation;
+        }
+        if (info.max_args > 0 && (int)params.size() > info.max_args) {
+          add_candidates(translation, input, segment.start, segment.end,
+                         "错误: 函数 " + func_name + " 最多接受 " +
+                             std::to_string(info.max_args) + " 个参数");
+          return translation;
+        }
+
+        if (info.need_quote) {
+          size_t q_idx = 0;
+          for (auto& p : params) {
+            if (!is_number_str(p) &&
+                (p.size() < 2 || (p.front() != '"' && p.front() != '\''))) {
+              if (q_idx == 1 && info.min_args >= 2) {
+              } else {
+                p = "'" + p + "'";
+              }
+            }
+            ++q_idx;
+          }
+        }
+
+        try {
+          std::string result = info.impl(params);
+          add_result(translation, input, segment.start, segment.end, result,
+                     func_name + "(" + param_part + ")");
+        } catch (...) {
+          add_candidates(translation, input, segment.start, segment.end,
+                         "函数执行错误: " + func_name);
+        }
+        return translation;
       }
+    }
+
+    auto fit = kCalcFunctions.find(express);
+    if (fit != kCalcFunctions.end()) {
+      add_candidates(translation, input, segment.start, segment.end,
+                     express + ": " + fit->second.desc);
       return translation;
     }
   }
