@@ -12,5 +12,5 @@ endif()
 
 set(plugin_name rime-calculator PARENT_SCOPE)
 set(plugin_objs $<TARGET_OBJECTS:rime-calculator-objs> PARENT_SCOPE)
-set(plugin_deps ${rime_library} ${rime_gears_library} PARENT_SCOPE)
+set(plugin_deps ${rime_library} PARENT_SCOPE)
 set(plugin_modules "calculator" PARENT_SCOPE)
