@@ -12,6 +12,9 @@
 
 namespace rime {
 
+static std::string g_chain_result;
+static std::string g_last_op_input;
+
 CalculatorTranslator::CalculatorTranslator(const Ticket& ticket)
     : Translator(ticket), tag_("calculator"), prefix_("V") {
   if (!ticket.schema)
@@ -136,18 +139,36 @@ an<Translation> CalculatorTranslator::Query(const string& input,
   if (!express.empty() &&
       std::string("+-*/%^\u00f7").find(express[0]) != std::string::npos) {
     is_op_first = true;
-    if (calc_prefix_expired()) {
+    if (express.size() == 1 && calc_prefix_expired()) {
       calc_prefix_clear();
       return nullptr;
     }
     prefix_buf = calc_prefix();
-    if (prefix_buf.empty())
-      return nullptr;
-    express = prefix_buf + express;
+    bool new_session = g_last_op_input.empty() ||
+        (input.size() < g_last_op_input.size() &&
+         g_last_op_input.compare(0, input.size(), input) != 0);
+      if (new_session && !g_chain_result.empty()) {
+        calc_prefix_set(g_chain_result);
+        calc_prefix_touch();
+        prefix_buf = g_chain_result;
+        g_chain_result.clear();
+      }
+      if (prefix_buf.empty())
+        return nullptr;
+      express = prefix_buf + express;
+      if (is_op_first && !express.empty() &&
+          std::string("+-*/%^\u00f7").find(express.back()) != std::string::npos) {
+        auto translation = New<FifoTranslation>();
+        add_candidates(translation, input, segment.start, segment.end,
+                       prefix_buf, "继续输入");
+        return translation;
+      }
+      g_last_op_input = input;
   } else if (!express.empty()) {
     calc_prefix_clear();
+    g_chain_result.clear();
+    g_last_op_input.clear();
   }
-
   if (express.empty())
     return nullptr;
 
@@ -274,9 +295,13 @@ an<Translation> CalculatorTranslator::Query(const string& input,
   try {
     CalculatorParser parser;
     std::string result = parser.Evaluate(express);
+    if (is_op_first && is_number_str(result)) {
+      g_chain_result = result;
+    }
     add_result(translation, input, segment.start, segment.end, result,
                display_expr);
   } catch (...) {
+    LOG(ERROR) << "calc: Evaluate exception for express='" << express << "'";
     add_candidates(translation, input, segment.start, segment.end, "计算错误");
   }
   return translation;

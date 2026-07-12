@@ -17,6 +17,9 @@ class DigitCatcher : public Processor {
 const std::string& calc_prefix();
 void calc_prefix_append(char ch);
 void calc_prefix_clear();
+void calc_prefix_pop_back();
+void calc_prefix_touch();
+void calc_prefix_set(const std::string& s);
 bool calc_prefix_expired();
 
 }  // namespace rime
