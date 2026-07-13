@@ -20,6 +20,8 @@ class CalculatorTranslator : public Translator {
   string tips_;
 };
 
+void calc_translator_clear_chain();
+
 }  // namespace rime
 
 #endif  // RIME_CALCULATOR_TRANSLATOR_H_

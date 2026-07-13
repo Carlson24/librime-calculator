@@ -15,6 +15,11 @@ namespace rime {
 static std::string g_chain_result;
 static std::string g_last_op_input;
 
+void calc_translator_clear_chain() {
+  g_chain_result.clear();
+  g_last_op_input.clear();
+}
+
 CalculatorTranslator::CalculatorTranslator(const Ticket& ticket)
     : Translator(ticket), tag_("calculator"), prefix_("V") {
   if (!ticket.schema)
@@ -84,15 +89,18 @@ static std::string make_sig(const std::string& name, const FuncInfo& info) {
   if (info.max_args == 0) {
   } else if (info.max_args > 0) {
     for (int i = 0; i < info.max_args; ++i) {
-      if (i > 0) s += ",";
+      if (i > 0)
+        s += ",";
       s += (char)('a' + i);
     }
   } else {
     for (int i = 0; i < info.min_args; ++i) {
-      if (i > 0) s += ",";
+      if (i > 0)
+        s += ",";
       s += (char)('a' + i);
     }
-    if (info.min_args > 0) s += ",";
+    if (info.min_args > 0)
+      s += ",";
     s += "...";
   }
   s += "): " + info.desc;
@@ -152,6 +160,7 @@ an<Translation> CalculatorTranslator::Query(const string& input,
       tips_.empty() ? "〔计算器〕" : "〔" + tips_ + "〕";
 
   std::string express = strip_prefix(input, prefix_);
+
   std::string display_expr = express;
 
   bool is_op_first = false;
@@ -164,26 +173,24 @@ an<Translation> CalculatorTranslator::Query(const string& input,
       return nullptr;
     }
     prefix_buf = calc_prefix();
-    bool new_session = g_last_op_input.empty() ||
-        (input.size() < g_last_op_input.size() &&
-         g_last_op_input.compare(0, input.size(), input) != 0);
-      if (new_session && !g_chain_result.empty()) {
-        calc_prefix_set(g_chain_result);
-        calc_prefix_touch();
-        prefix_buf = g_chain_result;
-        g_chain_result.clear();
-      }
-      if (prefix_buf.empty())
-        return nullptr;
-      express = prefix_buf + express;
-      if (is_op_first && !express.empty() &&
-          std::string("+-*/%^\u00f7").find(express.back()) != std::string::npos) {
-        auto translation = New<FifoTranslation>();
-        add_candidates(translation, input, segment.start, segment.end,
-                       prefix_buf, "继续输入");
-        return translation;
-      }
-      g_last_op_input = input;
+    if (express.size() == 1 && !g_chain_result.empty()) {
+      calc_prefix_set(g_chain_result);
+      calc_prefix_touch();
+      prefix_buf = g_chain_result;
+      g_chain_result.clear();
+    }
+    if (prefix_buf.empty()) {
+      return nullptr;
+    }
+    express = prefix_buf + express;
+    if (is_op_first && !express.empty() &&
+        std::string("+-*/%^\u00f7").find(express.back()) != std::string::npos) {
+      auto translation = New<FifoTranslation>();
+      add_candidates(translation, input, segment.start, segment.end, prefix_buf,
+                     "继续输入");
+      return translation;
+    }
+    g_last_op_input = input;
   } else if (!express.empty()) {
     calc_prefix_clear();
     g_chain_result.clear();
@@ -222,10 +229,8 @@ an<Translation> CalculatorTranslator::Query(const string& input,
     auto paren_open = express.find('(');
     auto paren_close = express.rfind(')');
 
-    if (paren_open != std::string::npos &&
-        paren_close != std::string::npos &&
-        paren_close == express.size() - 1 &&
-        paren_close > paren_open) {
+    if (paren_open != std::string::npos && paren_close != std::string::npos &&
+        paren_close == express.size() - 1 && paren_close > paren_open) {
       func_name = express.substr(0, paren_open);
       param_part = express.substr(paren_open + 1, paren_close - paren_open - 1);
     }

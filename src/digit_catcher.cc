@@ -6,6 +6,7 @@
 #include <rime/engine.h>
 #include <rime/key_event.h>
 
+#include "calculator_translator.h"
 #include "digit_catcher.h"
 
 namespace rime {
@@ -65,6 +66,7 @@ ProcessResult DigitCatcher::ProcessKeyEvent(const KeyEvent& key_event) {
   if (ch == XK_Return) {
     if (!g_calc_prefix.empty())
       calc_prefix_clear();
+    calc_translator_clear_chain();
     return kNoop;
   }
 
@@ -76,25 +78,21 @@ ProcessResult DigitCatcher::ProcessKeyEvent(const KeyEvent& key_event) {
       return kNoop;
     if (g_calc_prefix.back() == '.') {
       g_calc_prefix.pop_back();
-      engine_->CommitText(string(1, '\b'));
-      calc_prefix_clear();
+      calc_prefix_append('.');
       g_last_digit_time = std::chrono::steady_clock::now();
       return kNoop;
     }
     calc_prefix_append('.');
-    engine_->CommitText(".");
     g_last_digit_time = std::chrono::steady_clock::now();
-    return kAccepted;
+    return kNoop;
   }
 
   if (ch < '0' || ch > '9') {
-    if (ch != XK_plus && ch != XK_minus && ch != XK_asterisk &&
-        ch != XK_slash && ch != XK_percent && ch != XK_asciicircum &&
-        ch != XK_KP_Add && ch != XK_KP_Subtract &&
-        ch != XK_KP_Multiply && ch != XK_KP_Divide &&
-        ch != XK_division) {
-      if (!g_calc_prefix.empty())
+    if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+      if (!g_calc_prefix.empty()) {
         calc_prefix_clear();
+        calc_translator_clear_chain();
+      }
     }
     return kNoop;
   }
@@ -103,6 +101,18 @@ ProcessResult DigitCatcher::ProcessKeyEvent(const KeyEvent& key_event) {
 
   if (ctx->get_option("ascii_mode"))
     return kNoop;
+
+  {
+    const auto& comp = ctx->composition();
+    if (!comp.empty() &&
+        std::any_of(comp.begin(), comp.end(), [](const Segment& seg) {
+          return seg.HasTag("punct_number");
+        })) {
+      calc_prefix_append((char)ch);
+      g_last_digit_time = std::chrono::steady_clock::now();
+      return kNoop;
+    }
+  }
 
   if (ctx->HasMenu())
     return kNoop;
