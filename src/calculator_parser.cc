@@ -320,12 +320,6 @@ std::vector<CalculatorParser::Token> CalculatorParser::Tokenize(
       ++i;
       continue;
     }
-    if ((unsigned char)c == 0xC3 && i + 1 < expr.size() &&
-        (unsigned char)expr[i + 1] == 0xB7) {
-      tokens.push_back({OPERATOR, "÷"});
-      i += 2;
-      continue;
-    }
     if (c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '^') {
       std::string op(1, c);
       tokens.push_back({OPERATOR, op});
@@ -341,7 +335,7 @@ std::vector<CalculatorParser::Token> CalculatorParser::Tokenize(
 int CalculatorParser::Precedence(const std::string& op) {
   if (op == "+" || op == "-")
     return 1;
-  if (op == "*" || op == "/" || op == "%" || op == "÷")
+  if (op == "*" || op == "/" || op == "%")
     return 2;
   if (op == "^")
     return 3;
@@ -509,7 +503,7 @@ double CalculatorParser::EvalRPN(const std::vector<Token>& rpn) {
           st.push(a - b);
         else if (t.value == "*")
           st.push(a * b);
-        else if (t.value == "/" || t.value == "÷") {
+        else if (t.value == "/") {
           if (b == 0)
             throw std::runtime_error("除零错误");
           st.push(a / b);

@@ -166,7 +166,7 @@ an<Translation> CalculatorTranslator::Query(const string& input,
   bool is_op_first = false;
   std::string prefix_buf;
   if (!express.empty() &&
-      std::string("+-*/%^\u00f7").find(express[0]) != std::string::npos) {
+      std::string("+-*/%^").find(express[0]) != std::string::npos) {
     is_op_first = true;
     if (express.size() == 1 && calc_prefix_expired()) {
       calc_prefix_clear();
@@ -184,7 +184,7 @@ an<Translation> CalculatorTranslator::Query(const string& input,
     }
     express = prefix_buf + express;
     if (is_op_first && !express.empty() &&
-        std::string("+-*/%^\u00f7").find(express.back()) != std::string::npos) {
+        std::string("+-*/%^").find(express.back()) != std::string::npos) {
       auto translation = New<FifoTranslation>();
       add_candidates(translation, input, segment.start, segment.end, prefix_buf,
                      "继续输入");
@@ -282,6 +282,18 @@ an<Translation> CalculatorTranslator::Query(const string& input,
             p.erase(0, 1);
           while (!p.empty() && p.back() == ' ')
             p.pop_back();
+        }
+
+        for (auto& p : params) {
+          if (!is_number_str(p) &&
+              !(p.size() >= 2 &&
+                (p.front() == '\'' || p.front() == '"'))) {
+            CalculatorParser parser;
+            std::string evaluated = parser.Evaluate(p);
+            if (is_number_str(evaluated)) {
+              p = evaluated;
+            }
+          }
         }
 
         if (params.empty() && info.min_args > 0) {
