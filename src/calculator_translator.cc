@@ -2,6 +2,7 @@
 #include <rime/engine.h>
 #include <rime/schema.h>
 #include <rime/segmentation.h>
+#include <rime/context.h>
 #include <rime/ticket.h>
 #include <rime/translation.h>
 
@@ -149,6 +150,34 @@ bool is_number_str(const std::string& s) {
   return has_digit;
 }
 
+static size_t find_matching_paren(const std::string& s, size_t open_pos) {
+  int depth = 0;
+  for (size_t i = open_pos; i < s.size(); ++i) {
+    if (s[i] == '(')
+      ++depth;
+    if (s[i] == ')') {
+      --depth;
+      if (depth == 0)
+        return i;
+    }
+  }
+  return std::string::npos;
+}
+
+static bool has_unmatched_open_paren(const std::string& s) {
+  int depth = 0;
+  for (char c : s) {
+    if (c == '(')
+      ++depth;
+    if (c == ')') {
+      if (depth == 0)
+        return true;
+      --depth;
+    }
+  }
+  return depth != 0;
+}
+
 an<Translation> CalculatorTranslator::Query(const string& input,
                                             const Segment& segment) {
   if (!segment.HasTag(tag_))
@@ -156,12 +185,30 @@ an<Translation> CalculatorTranslator::Query(const string& input,
   if (!initialized_)
     Initialize();
 
-  const_cast<Segment*>(&segment)->prompt =
-      tips_.empty() ? "〔计算器〕" : "〔" + tips_ + "〕";
-
   std::string express = strip_prefix(input, prefix_);
 
   std::string display_expr = express;
+
+  const string& full_input = engine_->context()->input();
+  size_t caret_pos = engine_->context()->caret_pos();
+  int candidate_end = segment.end;
+
+  if (caret_pos >= full_input.length()) {
+    const_cast<Segment*>(&segment)->prompt =
+        tips_.empty() ? "〔计算器〕" : "〔" + tips_ + "〕";
+  }
+
+  if (caret_pos < full_input.length()) {
+    std::string full_express = strip_prefix(full_input, prefix_);
+    if (full_express != express && !full_express.empty()) {
+      express = full_express;
+      candidate_end = static_cast<int>(segment.start + prefix_.length() +
+                                       express.length());
+    }
+  }
+
+  string preedit_text =
+      (caret_pos < full_input.length()) ? "" : input;
 
   bool is_op_first = false;
   std::string prefix_buf;
@@ -186,7 +233,7 @@ an<Translation> CalculatorTranslator::Query(const string& input,
     if (is_op_first && !express.empty() &&
         std::string("+-*/%^").find(express.back()) != std::string::npos) {
       auto translation = New<FifoTranslation>();
-      add_candidates(translation, input, segment.start, segment.end, prefix_buf,
+      add_candidates(translation, preedit_text, segment.start, candidate_end, prefix_buf,
                      "继续输入");
       return translation;
     }
@@ -199,6 +246,9 @@ an<Translation> CalculatorTranslator::Query(const string& input,
   if (express.empty())
     return nullptr;
 
+  if (has_unmatched_open_paren(express))
+    return nullptr;
+
   auto translation = New<FifoTranslation>();
 
   auto const_it = kConstants.find(express);
@@ -209,14 +259,14 @@ an<Translation> CalculatorTranslator::Query(const string& input,
     std::string desc;
     if (f_it != kCalcFunctions.end())
       desc = f_it->second.desc;
-    add_result(translation, input, segment.start, segment.end, formatted,
+    add_result(translation, preedit_text, segment.start, candidate_end, formatted,
                display_expr);
     return translation;
   }
 
   if (express == "help") {
     for (const auto& [name, info] : kCalcFunctions) {
-      add_candidates(translation, input, segment.start, segment.end,
+      add_candidates(translation, preedit_text, segment.start, candidate_end,
                      make_sig(name, info));
     }
     return translation;
@@ -227,10 +277,12 @@ an<Translation> CalculatorTranslator::Query(const string& input,
     std::string param_part;
 
     auto paren_open = express.find('(');
-    auto paren_close = express.rfind(')');
+    auto paren_close = (paren_open != std::string::npos)
+                           ? find_matching_paren(express, paren_open)
+                           : std::string::npos;
 
     if (paren_open != std::string::npos && paren_close != std::string::npos &&
-        paren_close == express.size() - 1 && paren_close > paren_open) {
+        paren_close > paren_open) {
       func_name = express.substr(0, paren_open);
       param_part = express.substr(paren_open + 1, paren_close - paren_open - 1);
     }
@@ -297,19 +349,19 @@ an<Translation> CalculatorTranslator::Query(const string& input,
         }
 
         if (params.empty() && info.min_args > 0) {
-          add_candidates(translation, input, segment.start, segment.end,
+          add_candidates(translation, preedit_text, segment.start, candidate_end,
                          func_name + ": " + info.desc);
           return translation;
         }
 
         if ((int)params.size() < info.min_args) {
-          add_candidates(translation, input, segment.start, segment.end,
+          add_candidates(translation, preedit_text, segment.start, candidate_end,
                          "错误: 函数 " + func_name + " 需要至少 " +
                              std::to_string(info.min_args) + " 个参数");
           return translation;
         }
         if (info.max_args > 0 && (int)params.size() > info.max_args) {
-          add_candidates(translation, input, segment.start, segment.end,
+          add_candidates(translation, preedit_text, segment.start, candidate_end,
                          "错误: 函数 " + func_name + " 最多接受 " +
                              std::to_string(info.max_args) + " 个参数");
           return translation;
@@ -331,10 +383,10 @@ an<Translation> CalculatorTranslator::Query(const string& input,
 
         try {
           std::string result = info.impl(params);
-          add_result(translation, input, segment.start, segment.end, result,
+          add_result(translation, preedit_text, segment.start, candidate_end, result,
                      func_name + "(" + param_part + ")");
         } catch (...) {
-          add_candidates(translation, input, segment.start, segment.end,
+          add_candidates(translation, preedit_text, segment.start, candidate_end,
                          "函数执行错误: " + func_name);
         }
         return translation;
@@ -343,7 +395,7 @@ an<Translation> CalculatorTranslator::Query(const string& input,
 
     auto fit = kCalcFunctions.find(express);
     if (fit != kCalcFunctions.end()) {
-      add_candidates(translation, input, segment.start, segment.end,
+      add_candidates(translation, preedit_text, segment.start, candidate_end,
                      express + ": " + fit->second.desc);
       return translation;
     }
@@ -355,11 +407,11 @@ an<Translation> CalculatorTranslator::Query(const string& input,
     if (is_op_first && is_number_str(result)) {
       g_chain_result = result;
     }
-    add_result(translation, input, segment.start, segment.end, result,
+    add_result(translation, preedit_text, segment.start, candidate_end, result,
                display_expr);
   } catch (...) {
     LOG(ERROR) << "calc: Evaluate exception for express='" << express << "'";
-    add_candidates(translation, input, segment.start, segment.end, "计算错误");
+    add_candidates(translation, preedit_text, segment.start, candidate_end, "计算错误");
   }
   return translation;
 }
